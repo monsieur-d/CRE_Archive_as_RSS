@@ -58,6 +58,8 @@ object Main extends App {
 
   /** Opens a new instance of the simulated browser */
   def createWebDriver = new HtmlUnitDriver()
+  
+  java.util.logging.Logger.getLogger("com.gargoylesoftware.htmlunit").setLevel(java.util.logging.Level.SEVERE);
 
   /** Tries to execute a block multiple times until it either finishes without errors or the maximum number of trials
     * is reached
@@ -171,7 +173,7 @@ object Main extends App {
     </rss>
   // Write the XML file containing the RSS feed
   println(rssFeed)
-  XML.save(System.getProperty("user.home","~")+"/Dropbox/Public/CRE-Archiv.rss",rssFeed,"UTF8")
+  XML.save(System.getProperty("user.home","~")+"/Raumzeit-Archiv.rss",rssFeed,"UTF8")
 }
 
 
