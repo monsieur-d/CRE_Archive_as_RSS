@@ -173,7 +173,7 @@ object Main extends App {
     </rss>
   // Write the XML file containing the RSS feed
   println(rssFeed)
-  XML.save(System.getProperty("user.home","~")+"/Raumzeit-Archiv.rss",rssFeed,"UTF8")
+  XML.save(System.getProperty("user.home","~")+"/CRE-Archiv.rss",rssFeed,"UTF8")
 }
 
 
