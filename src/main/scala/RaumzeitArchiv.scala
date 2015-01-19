@@ -6,6 +6,7 @@ import org.openqa.selenium.By
 import org.openqa.selenium.htmlunit.HtmlUnitDriver
 import scala.collection.JavaConversions._
 import xml.XML
+import org.joda.time.format.DateTimeFormatter
 
 /**
  * Converts the archive of cre.fm into a static RSS file.
@@ -44,13 +45,13 @@ import xml.XML
 
 // All the content of this "object" will be executed af is it was a script. Putting the commands into a OO construct
 // makes it easier for IDEs to deal with them.
-object Main extends App {
+object RaumzeitArchiv extends App {
   // These "case classes" are containers for the content extracted from the website
   /** Contains data about each entry from the main archive page */
-  case class PodcastEntryInArchivePage(title : String, date : DateTime, duration : String, thumbnailImageUrl : String,
+  case class PodcastEntryInArchivePage(title : String, duration : String, thumbnailImageUrl : String,
                                        detailPageUrl : String)
   /**Contains the content extracted from a detail page*/
-  case class PodcastEntryInDetailPage(summary : String, imageUrl : String)
+  case class PodcastEntryInDetailPage(summary : String, date : DateTime, imageUrl : String)
   /**Contains data about the mp3 file with the podcast audio, referenced from the details page */
   case class PodcastMedium(enclosureUrl : String, sizeInBytes : Long)
   /** Holds the different information snips together for each podcast episode */
@@ -82,8 +83,9 @@ object Main extends App {
   }
 
   // Some information about the archive page
-  val archiveUrl="""http://cre.fm/archiv"""
-  val archiveDateFormat="""\s*(\d{1,2})\.(\d{1,2})\.(\d{2,4})\s*""".r
+  val archiveUrl="""http://raumzeit-podcast.de/archiv/"""
+  val archiveDateFormat="""\d\.\s[\w^äöüÄÖÜ]+\s\d{4}\s\d\d:\d\d\s""".r
+  val durationFormat="""\d+:\d+:\d+""".r
   val archiveTimeZone=DateTimeZone.forID("Europe/Berlin")
 
   // Fetch the archive page
@@ -92,32 +94,35 @@ object Main extends App {
   println(webDriver.getTitle)
 
   // Extract a list of podcast episodes from the archive page
-  val episodesHtmlFragments=webDriver.findElements(By.className("podcast_archive_element")).toList
+  val episodesHtmlFragments=webDriver.findElements(By.className("archive_episode_row")).toList
   val episodesInfoInArchive = episodesHtmlFragments.map{  e =>
-    val title= e.findElement(By.xpath("""./td[@class='title']/a/strong""")).getText
-    val thumbnailImageUrl=e.findElement(By.xpath("""./td[@class='thumbnail']/img""")).getAttribute("src")
-    val dateString=e.findElement(By.xpath("""./td[@class='date']/*[@class='release_date']""")).getText
-    val date=dateString match {
-      case archiveDateFormat(day, month, year) => new DateTime(year.toInt, month.toInt, day.toInt,0,0,0,archiveTimeZone)
-      case _ => new DateTime()
-    }
-    val detailPageUrl=e.findElement(By.xpath("""./td[@class='title']/a""")).getAttribute("href")
-    val duration=e.findElement(By.className("duration")).getText
-    PodcastEntryInArchivePage(title,date,duration,thumbnailImageUrl,detailPageUrl)
+    val descriptionEl = e.findElement(By.xpath("""./td[@class='episode_description']"""))
+    val title = descriptionEl.findElement(By.xpath("""./div[@class='episode_title']/a""")).getText
+    val detailPageUrl = descriptionEl.findElement(By.xpath("""./div[@class='episode_title']/a""")).getAttribute("href")
+    val metaString = descriptionEl.findElement(By.xpath("""./div[@class='episode_meta']""")).getText
+    
+    val thumbnailImageUrl=e.findElement(By.xpath("""./td[@class='episode_icon']/img""")).getAttribute("src")
+
+    val duration = durationFormat.findFirstIn(metaString).get
+    PodcastEntryInArchivePage(title,duration,thumbnailImageUrl,detailPageUrl)
   }
   webDriver.quit()
 
   // For each episode, extract data from the corresponding detail page.
   // Handle multiple pages at the same time for better performance.
-  val episodes=episodesInfoInArchive.par.map {  e =>
-    tryMultipleTimes(5) { () =>
+  val episodes=episodesInfoInArchive.map {  e =>
+
       println(e.title)
       val webDriver=createWebDriver
       webDriver.get(e.detailPageUrl)
+      val article = webDriver.findElement(By.tagName("article"))
+      val dateString = article.findElement(By.tagName("header")).findElement(By.xpath("""./div[@class='entry-meta']/a/time""")).getAttribute("datetime")
+      val date = DateTime.parse(dateString)
       val meta = webDriver.findElements(By.tagName("meta"))
       val summary = meta.find(e => e.getAttribute("property") == "og:description").get.getAttribute("content")
       val mediaEnclosureUrl = meta.find(e => e.getAttribute("property") == "og:audio" && e.getAttribute("content").endsWith(".m4a"))
       									.get.getAttribute("content")
+      
       webDriver.close()
       val connection=(new URL(mediaEnclosureUrl)).openConnection()
       connection.connect()
@@ -125,8 +130,8 @@ object Main extends App {
       connection match {
         case httpConnection : HttpURLConnection => httpConnection.disconnect()
       }
-      PodcastEpisode(e,PodcastEntryInDetailPage(summary,"imageUrl"),PodcastMedium(mediaEnclosureUrl,sizeInBytes))
-    }
+      PodcastEpisode(e,PodcastEntryInDetailPage(summary, date,"imageUrl"),PodcastMedium(mediaEnclosureUrl,sizeInBytes))
+
   }
 
   // Some information about the RSS format
@@ -135,28 +140,22 @@ object Main extends App {
   val podcastDateFormatInEnglish = podcastDateFormat.withLocale(Locale.ENGLISH)
   // Create a XML object containing the RSS feed
   val rssFeed=
-    <rss xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" version="2.0">
+    <rss xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"  version="2.0">
       <channel>
-        <title>CRE: Technik, Kultur, Gesellschaft - ARCHIV</title>
-        <description>Der Interview-Podcast mit Tim Pritlove</description>
-        <link>http://cre.fm/archiv</link>
+        <title>Raumzeit - ARCHIV</title>
+        <description>Der Podcast über Raumfahrt - mit Tim Pritlove</description>
+        <link>http://raumzeit-podcast.de/archiv</link>
         <language>de</language>
-        <itunes:summary>Intensive und ausfuehrliche Gespraeche ueber Themen aus Technik, Kultur und Gesellschaft, das ist CRE. Interessante Gespraechspartner stehen Rede und Antwort zu Fragen, die man normalerweise selten gestellt bekommt. CRE moechte  aufklaeren, weiterbilden und unterhalten.</itunes:summary>
+        <itunes:summary>Raumzeit ist eine Serie von Gesprächen mit Wissenschaftlern, Ingenieuren, Astronauten und Projektleitern über Raumfahrt. Jede Episode rückt einen Themenbereich in den Fokus und diskutiert ausführlich alle Aspekte und Details.  </itunes:summary>
+  		<itunes:category text="Science &amp; Medicine" /><itunes:category text="Technology" />
         <itunes:author>Tim Pritlove</itunes:author>
         <itunes:explicit>no</itunes:explicit>
-        <itunes:image href="http://meta.metaebene.me/media/cre/cre-logo-600x600.jpg" />
-        <managingEditor>cre@metaebene.me (Tim Pritlove)</managingEditor>
-        <copyright>Metaebene Personal Media</copyright>
-        <itunes:subtitle>Der Interview-Podcast mit Tim Pritlove</itunes:subtitle>
-        <image>
-          <title>CRE: Technik, Kultur, Gesellschaft - ARCHIV</title>
-          <url>http://meta.metaebene.me/media/cre/cre-logo-600x600.jpg</url>
-          <link>http://cre.fm/archiv</link>
-        </image>
-        <itunes:owner>
-          <itunes:email>cre@metaebene.me</itunes:email>
-        </itunes:owner>
-        <itunes:category text="Technology" />
+        <itunes:image href="http://meta.metaebene.me/media/raumzeit/raumzeit-icon-1400x1400.jpg" />
+        <itunes:subtitle>Raumzeit: Der Podcast über Raumfahrt mit Tim Pritlove</itunes:subtitle>
+		<itunes:owner>
+			<itunes:name>Tim Pritlove</itunes:name>
+			<itunes:email>raumzeit@metaebene.me</itunes:email>
+		</itunes:owner>
         { for (episode <- episodes.toList) yield
           <item>
             <title>{episode.archive.title}</title>
@@ -165,7 +164,7 @@ object Main extends App {
             <itunes:image href={episode.archive.thumbnailImageUrl} />
             <enclosure url={episode.medium.enclosureUrl} length={episode.medium.sizeInBytes.toString}  type="audio/x-m4a" />
             <guid>{episode.medium.enclosureUrl}</guid>
-            <pubDate>{episode.archive.date.toString(podcastDateFormatInEnglish)}</pubDate>
+            <pubDate>{episode.detail.date.toString(podcastDateFormatInEnglish)}</pubDate>
             <itunes:duration>{episode.archive.duration}</itunes:duration>
           </item>
         }
@@ -173,7 +172,7 @@ object Main extends App {
     </rss>
   // Write the XML file containing the RSS feed
   println(rssFeed)
-  XML.save(System.getProperty("user.home","~")+"/Raumzeit-Archiv.rss",rssFeed,"UTF8")
+  XML.save(System.getProperty("user.home","~")+"/Raumzeit-Archiv.rss",rssFeed,"UTF8",true)
 }
 
 
